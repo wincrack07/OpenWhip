@@ -4,7 +4,7 @@
 
 **Cansado de que tu agente se demore? Esto te ayudará a hacerlo más rápido.**
 
-Un latigo en la barra de menú para Codex: latigazo para subir el effort (y Fast cuando ya no hay más), caricia para bajarlo. Si lo acaricias, el latigo se vuelve flores y corazones.
+Un latigo en la barra de menú para **Claude.app**, **ChatGPT/Codex** (app de escritorio) y el **CLI** en terminal (Orca, Terminal, iTerm…). Latigazo para subir el effort (y Fast cuando ya no hay más); caricia para bajarlo. Si lo acaricias, el latigo se vuelve flores y corazones.
 
 ## Install + run
 
@@ -23,14 +23,17 @@ sudo apt install xdotool
 
 ## Controles
 
-1. Deja Codex al frente, con el compositor vacío.
-2. **Clic** en el icono del latigo (hover no hace nada).
-3. Latigazo rápido:
+1. Abre Claude o ChatGPT (Codex) — o un terminal con el CLI — y deja el compositor vacío.
+2. Haz clic una vez en esa ventana para que OpenWhip la recuerde (el tooltip dice `OpenWhip · Claude` o `OpenWhip · ChatGPT`).
+3. **Clic** en el icono del latigo (hover no hace nada).
+4. Latigazo rápido:
    - El primero avisa.
    - El segundo sube el effort (`medium` → `high` → `xhigh` → `max` → `ultra`).
+   - En Claude escribe `/effort …`; en Codex/ChatGPT manda Shift+↑.
    - Si sigues en `ultra`, escribe `/fast on`.
-4. Arrástralo despacio: flores y corazones, baja un paso de effort y escribe `/fast off`.
-5. Otro clic suelta el latigo. Clic derecho → Salir.
+   - Más latigazos: prompts random insultándolo para que termine YA.
+5. Arrástralo despacio: flores y corazones, baja effort y `/fast off`.
+6. Otro clic suelta el latigo. Clic derecho → Salir.
 
 En macOS, activa **Accesibilidad** para Electron (Ajustes del Sistema → Privacidad y seguridad).
 

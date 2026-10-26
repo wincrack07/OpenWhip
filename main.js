@@ -2,7 +2,7 @@ const { app, BrowserWindow, Tray, Menu, ipcMain, nativeImage, screen, clipboard 
 const path = require('path');
 const fs = require('fs');
 const { execFile } = require('child_process');
-const { createController } = require('./codex');
+const { createController, EFFORTS } = require('./codex');
 
 // ── Win32 FFI (Windows only) ────────────────────────────────────────────────
 let keybd_event, VkKeyScanA;
@@ -22,7 +22,7 @@ let tray, overlay;
 let overlayReady = false;
 let spawnQueued = false;
 let codex;
-let targetApp = null;
+let targetApp = null; // last agent app: Claude, ChatGPT (Codex), Orca, Terminal…
 
 if (process.platform === 'darwin') {
   app.setActivationPolicy('accessory');
@@ -31,76 +31,203 @@ if (process.platform === 'darwin') {
 const VK_RETURN = 0x0D;
 const KEYUP = 0x0002;
 
+// Desktop + terminal hosts we can whip.
+// Claude.app → /effort + /fast. ChatGPT / Codex apps → Shift+↑↓ + /fast (CLI same).
+const AGENT_APPS = {
+  Claude: 'claude',
+  ChatGPT: 'codex',
+  Codex: 'codex',
+  Orca: 'codex',
+  Terminal: 'codex',
+  iTerm2: 'codex',
+  Ghostty: 'codex',
+  Warp: 'codex',
+  Alacritty: 'codex',
+  kitty: 'codex',
+};
+
+function flavorFor(appName) {
+  return AGENT_APPS[appName] || 'codex';
+}
+
+function setTargetApp(name) {
+  if (!name || !AGENT_APPS[name]) return;
+  targetApp = name;
+  if (tray) tray.setToolTip(`OpenWhip · ${name} (${flavorFor(name)})`);
+}
+
 function rememberFrontApp() {
   if (process.platform !== 'darwin') return;
   if (overlay && overlay.isVisible()) return;
   const script = [
     'tell application "System Events"',
     '  set p to first application process whose frontmost is true',
-    '  set n to name of p',
-    '  return n',
+    '  return name of p',
     'end tell',
   ].join('\n');
   execFile('osascript', ['-e', script], (err, stdout) => {
     if (err) return;
-    const name = String(stdout || '').trim();
-    if (!name || /electron|openwhip/i.test(name)) return;
-    targetApp = name;
-    if (tray) tray.setToolTip(`OpenWhip · ${name}`);
+    setTargetApp(String(stdout || '').trim());
   });
 }
 
-function focusScript() {
-  const name = (targetApp || '').replace(/\\/g, '\\\\').replace(/"/g, '\\"');
-  if (!name) return '';
-  return `set frontmost of process "${name}" to true\n  delay 0.12`;
+function listRunningAgentApps() {
+  return new Promise((resolve) => {
+    if (process.platform !== 'darwin') {
+      resolve([]);
+      return;
+    }
+    const names = Object.keys(AGENT_APPS)
+      .map((n) => `"${n}"`)
+      .join(', ');
+    const script = [
+      'tell application "System Events"',
+      `  set wanted to {${names}}`,
+      '  set found to {}',
+      '  repeat with p in (application processes whose background only is false)',
+      '    set n to name of p as text',
+      '    if n is in wanted then',
+      '      try',
+      '        if (count of windows of p) > 0 then set end of found to n',
+      '      end try',
+      '    end if',
+      '  end repeat',
+      '  set AppleScript\'s text item delimiters to linefeed',
+      '  return found as text',
+      'end tell',
+    ].join('\n');
+    execFile('osascript', ['-e', script], (err, stdout) => {
+      if (err) {
+        resolve([]);
+        return;
+      }
+      const list = String(stdout || '')
+        .split(/\r?\n/)
+        .map((s) => s.trim())
+        .filter(Boolean);
+      resolve(list);
+    });
+  });
 }
 
-/** Codex effort: Shift+Up / Shift+Down. Fast: paste `/fast on|off` + Enter. */
-function sendCodexCommand(command) {
-  return new Promise((resolve, reject) => {
+async function resolveTargetApp() {
+  const running = await listRunningAgentApps();
+  if (targetApp && running.includes(targetApp)) return targetApp;
+  // Prefer Claude / ChatGPT / Codex desktop over bare terminals.
+  const preferred = [
+    'Claude', 'ChatGPT', 'Codex',
+    'Orca', 'Terminal', 'iTerm2', 'Ghostty', 'Warp', 'Alacritty', 'kitty',
+  ];
+  for (const name of preferred) {
+    if (running.includes(name)) {
+      setTargetApp(name);
+      return name;
+    }
+  }
+  return targetApp;
+}
+
+function activateScript(appName) {
+  const name = (appName || '').replace(/\\/g, '\\\\').replace(/"/g, '\\"');
+  if (!name) return '';
+  // Activate by app name, then force the process frontmost (more reliable for Electron apps).
+  return [
+    `try`,
+    `  tell application "${name}" to activate`,
+    `end try`,
+    `tell application "System Events"`,
+    `  set frontmost of process "${name}" to true`,
+    `  delay 0.18`,
+    `end tell`,
+  ].join('\n');
+}
+
+function pasteLineScript(appName) {
+  // text already on clipboard; Cmd+A + delete clears the composer first
+  const name = (appName || '').replace(/\\/g, '\\\\').replace(/"/g, '\\"');
+  return [
+    activateScript(name),
+    'tell application "System Events"',
+    '  keystroke "a" using command down',
+    '  delay 0.05',
+    '  key code 51',
+    '  delay 0.05',
+    '  keystroke "v" using command down',
+    '  delay 0.08',
+    '  key code 36',
+    'end tell',
+  ].filter(Boolean).join('\n');
+}
+
+function keyScript(appName, bodyLines) {
+  return [
+    activateScript(appName),
+    'tell application "System Events"',
+    ...bodyLines.map((l) => (l.startsWith(' ') ? l : `  ${l}`)),
+    'end tell',
+  ].filter(Boolean).join('\n');
+}
+
+/** Send to Claude.app, ChatGPT/Codex desktop, or a Codex CLI terminal. */
+function sendAgentCommand(command) {
+  return new Promise(async (resolve, reject) => {
     if (process.platform !== 'darwin') {
       resolve();
       return;
     }
-    const focus = focusScript();
-    if (command === 'increase' || command === 'decrease') {
-      const code = command === 'increase' ? 126 : 125; // Up / Down
-      const script = [
-        'tell application "System Events"',
-        focus,
-        `  key code ${code} using shift down`,
-        'end tell',
-      ].filter(Boolean).join('\n');
-      execFile('osascript', ['-e', script], err => (err ? reject(err) : resolve()));
+    const appName = await resolveTargetApp();
+    if (!appName) {
+      reject(new Error('no agent app'));
       return;
     }
-    const text = command === 'fast-on' ? '/fast on' : command === 'fast-off' ? '/fast off' : null;
+    const flavor = flavorFor(appName);
+
+    // Codex desktop/CLI: Shift+arrows. Claude.app: absolute /effort.
+    if (typeof command === 'string' && command.startsWith('effort:')) {
+      const level = command.slice('effort:'.length);
+      if (flavor === 'claude') {
+        const previous = clipboard.readText();
+        clipboard.writeText('/effort ' + level);
+        execFile('osascript', ['-e', pasteLineScript(appName)], (err) => {
+          setTimeout(() => clipboard.writeText(previous), 450);
+          if (err) reject(err);
+          else resolve();
+        });
+        return;
+      }
+      const dir = decideEffortKey(level);
+      const code = dir === 'up' ? 126 : 125;
+      const script = keyScript(appName, [`key code ${code} using shift down`]);
+      execFile('osascript', ['-e', script], (err) => (err ? reject(err) : resolve()));
+      return;
+    }
+
+    let text = null;
+    if (command === 'fast-on') text = '/fast on';
+    else if (command === 'fast-off') text = '/fast off';
+    else if (typeof command === 'string' && command.startsWith('prompt:')) {
+      text = command.slice('prompt:'.length);
+    }
     if (!text) {
       resolve();
       return;
     }
     const previous = clipboard.readText();
     clipboard.writeText(text);
-    const script = [
-      'tell application "System Events"',
-      focus,
-      // Clear whatever is already in the Codex composer.
-      '  keystroke "a" using command down',
-      '  delay 0.04',
-      '  key code 51',
-      '  delay 0.04',
-      '  keystroke "v" using command down',
-      '  delay 0.06',
-      '  key code 36',
-      'end tell',
-    ].filter(Boolean).join('\n');
-    execFile('osascript', ['-e', script], err => {
-      setTimeout(() => clipboard.writeText(previous), 400);
+    execFile('osascript', ['-e', pasteLineScript(appName)], (err) => {
+      setTimeout(() => clipboard.writeText(previous), 450);
       if (err) reject(err);
       else resolve();
     });
   });
+}
+
+let lastEffortIndex = EFFORTS.indexOf('medium');
+function decideEffortKey(level) {
+  const idx = EFFORTS.indexOf(level);
+  const dir = idx >= lastEffortIndex ? 'up' : 'down';
+  if (idx >= 0) lastEffortIndex = idx;
+  return dir;
 }
 
 function createTrayIconFallback() {
@@ -201,12 +328,18 @@ function runGesture(result) {
   publishCodex(result);
   if (!result.done) return;
   result.done.catch(err => {
-    const denied = /not allowed|assistive|1002|-1719|-25211/i.test(err.message || '');
+    const msg = err.message || '';
+    const denied = /not allowed|assistive|1002|-1719|-25211/i.test(msg);
+    const missing = /no agent app/i.test(msg);
     publishCodex({
       ...result,
-      label: denied ? 'activa Accesibilidad' : 'no entró el texto',
+      label: denied
+        ? 'activa Accesibilidad'
+        : missing
+          ? 'abre Claude o ChatGPT'
+          : 'no entró el texto',
     });
-    console.warn('codex keystroke failed:', err.message || err);
+    console.warn('agent keystroke failed:', msg);
   });
 }
 
@@ -248,15 +381,18 @@ function sendMacroWindows(command) {
     keybd_event(vk, 0, KEYUP, 0);
     keybd_event(0x10, 0, KEYUP, 0);
   };
-  if (command === 'increase') {
-    shiftArrow(0x26);
+  if (typeof command === 'string' && command.startsWith('effort:')) {
+    const level = command.slice('effort:'.length);
+    shiftArrow(decideEffortKey(level) === 'up' ? 0x26 : 0x28);
     return;
   }
-  if (command === 'decrease') {
-    shiftArrow(0x28);
-    return;
+  let text = null;
+  if (command === 'fast-on') text = '/fast on';
+  else if (command === 'fast-off') text = '/fast off';
+  else if (typeof command === 'string' && command.startsWith('prompt:')) {
+    text = command.slice('prompt:'.length);
   }
-  const text = command === 'fast-on' ? '/fast on' : '/fast off';
+  if (!text) return;
   for (const ch of text) tapChar(ch);
   keybd_event(VK_RETURN, 0, 0, 0);
   keybd_event(VK_RETURN, 0, KEYUP, 0);
@@ -266,19 +402,22 @@ function sendMacroWindows(command) {
 // ── App lifecycle ───────────────────────────────────────────────────────────
 app.whenReady().then(async () => {
   codex = createController({
-    send: process.platform === 'win32' ? (cmd) => Promise.resolve(sendMacroWindows(cmd)) : sendCodexCommand,
+    send: process.platform === 'win32'
+      ? (cmd) => Promise.resolve(sendMacroWindows(cmd))
+      : sendAgentCommand,
   });
   rememberFrontApp();
   setInterval(rememberFrontApp, 700);
   tray = new Tray(await getTrayIcon());
-  tray.setToolTip('OpenWhip · clic para el latigo');
+  tray.setToolTip('OpenWhip · clic · Claude / ChatGPT / Codex');
   // On macOS a context menu steals the left click, so Quit is right-click only.
   const quitMenu = Menu.buildFromTemplate([
     { label: 'Salir de OpenWhip', click: () => app.quit() },
   ]);
   tray.on('right-click', () => tray.popUpContextMenu(quitMenu));
-  tray.on('click', () => {
+  tray.on('click', async () => {
     rememberFrontApp();
+    await resolveTargetApp();
     toggleOverlay();
   });
 });
