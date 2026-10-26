@@ -2,41 +2,38 @@
 
 ![Whip divider](assets/divider.png)
 
-Sometimes claude code is going too shlow, and you must whip him into shape..
+**Cansado de que tu agente se demore? Esto te ayudará a hacerlo más rápido.**
+
+Un latigo en la barra de menú para Codex: latigazo para subir el effort (y Fast cuando ya no hay más), caricia para bajarlo. Si lo acaricias, el latigo se vuelve flores y corazones.
 
 ## Install + run
 
 ```bash
-npm install -g openwhip
-openwhip
+git clone https://github.com/wincrack07/OpenWhip.git
+cd OpenWhip
+npm install
+npm start
 ```
 
-windows and mac supported out of the box, but Linux is a special snowflake so you need to install `xdotool` for keyboard automation
+Windows y Mac listos. En Linux instala `xdotool`:
 
 ```bash
 sudo apt install xdotool
 ```
 
-## Controls
+## Controles
 
-- Click tray icon: spawn whip.
-- Click: drop whip.
-- Whip him 😩💢
-- It sends an interrupt (Ctrl-C) and one of 5 encouraging messages!
+1. Deja Codex al frente, con el compositor vacío.
+2. **Clic** en el icono del latigo (hover no hace nada).
+3. Latigazo rápido:
+   - El primero avisa.
+   - El segundo sube el effort (`medium` → `high` → `xhigh` → `max` → `ultra`).
+   - Si sigues en `ultra`, escribe `/fast on`.
+4. Arrástralo despacio: flores y corazones, baja un paso de effort y escribe `/fast off`.
+5. Otro clic suelta el latigo. Clic derecho → Salir.
 
-## Roadmap
+En macOS, activa **Accesibilidad** para Electron (Ajustes del Sistema → Privacidad y seguridad).
 
-- [x] Initial release! 🥳
-- [x] Cease and desist letter from Anthropic
-- [ ] Crypto miner
-- [ ] Logs of how many times you whipped claude so when the robots come we can order people nicely for them
-- [ ] Updated whip physics
+## Basado en
 
-## Ecosystem
-
-The OFFICAL openwhip ecosystem token. 
-
-Contract address: BRyUZbJkm9Pty4FUmTrBGno7U4Ga8TWzcKJJRLCBpump
-
-Stay tuned for updates on X! 👀
-https://x.com/blended_jpeg
+Fork con features para Codex, a partir de [GitFrog1111/OpenWhip](https://github.com/GitFrog1111/OpenWhip).

@@ -1,7 +1,7 @@
 {
   "name": "openwhip",
   "version": "1.1.0",
-  "description": "Whip Claude into shape",
+  "description": "Whip Codex into shape — effort up, fast on, pet to calm down",
   "license": "MIT",
   "main": "main.js",
   "bin": {
@@ -24,12 +24,12 @@
   ],
   "repository": {
     "type": "git",
-    "url": "git+https://github.com/GitFrog1111/OpenWhip.git"
+    "url": "git+https://github.com/wincrack07/OpenWhip.git"
   },
   "bugs": {
-    "url": "https://github.com/GitFrog1111/OpenWhip/issues"
+    "url": "https://github.com/wincrack07/OpenWhip/issues"
   },
-  "homepage": "https://github.com/GitFrog1111/OpenWhip#readme",
+  "homepage": "https://github.com/wincrack07/OpenWhip#readme",
   "files": [
     "main.js",
     "preload.js",
@@ -38,6 +38,7 @@
     "icon",
     "bin/openwhip.js",
     "bin/badclaude.js",
+    "codex.js",
     "README.md"
   ],
   "scripts": {

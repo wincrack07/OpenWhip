@@ -49,7 +49,7 @@ const P = {
   wallFriction:    0.86,   // tangential damping on wall hit
 
   // Crack detection
-  crackSpeed:     340,     // tip velocity threshold to trigger crack
+  crackSpeed:     95,      // tip velocity threshold to trigger crack
   crackCooldownMs:200,   // min ms between cracks
   firstCrackGraceMs: 350, // no crack (macro) until this long after spawn
 
@@ -84,6 +84,12 @@ let lastCrackTime = 0;
 let whipSpawnTime = 0;
 let handleAngle = P.baseTargetAngle;
 let handleAngVel = 0;
+let mood = 'whip'; // whip | fast | pet
+let banner = '';
+let bannerUntil = 0;
+let gentleSince = 0;
+let lastPetAt = 0;
+const petals = [];
 
 const WHIP_CRACK_SOUNDS = ['sounds/A.mp3', 'sounds/B.mp3', 'sounds/C.mp3', 'sounds/D.mp3', 'sounds/E.mp3'];
 
@@ -357,14 +363,18 @@ function update() {
   const tip = whip[whip.length - 1];
   const tipVel = Math.hypot(tip.x - tip.px, tip.y - tip.py);
 
+  const now = Date.now();
+  let cracked = false;
   if (!dropping && tipVel > P.crackSpeed) {
-    const now = Date.now();
     if (now - whipSpawnTime >= P.firstCrackGraceMs && now - lastCrackTime > P.crackCooldownMs) {
       lastCrackTime = now;
+      cracked = true;
+      if (mood === 'pet') mood = 'whip';
       playCrackSound();
       window.bridge.whipCrack();
     }
   }
+  noteCaress(now, cracked);
 
   // If dropping, check if everything fell off screen
   if (dropping && whip.every(p => p.y > H + 60)) {
@@ -372,8 +382,60 @@ function update() {
     dropping = false;
     window.bridge.hideOverlay();
   }
+  stepPetals();
   prevMouseX = mouseX;
   prevMouseY = mouseY;
+}
+
+function noteCaress(now, cracked) {
+  if (!whip || dropping || cracked) {
+    gentleSince = 0;
+    return;
+  }
+  const speed = Math.hypot(mouseX - prevMouseX, mouseY - prevMouseY);
+  if (speed >= 16) {
+    gentleSince = 0;
+    return;
+  }
+  if (speed < 1.1) return;
+  if (!gentleSince) gentleSince = now;
+  if (now - gentleSince < 340) return;
+  if (now - lastPetAt < 720) return;
+  if (now - lastCrackTime < 900) return;
+  lastPetAt = now;
+  gentleSince = now;
+  mood = 'pet';
+  burstPetals();
+  window.bridge.pet();
+}
+
+function burstPetals() {
+  if (!whip) return;
+  const origin = whip[Math.max(0, whip.length - 3)];
+  for (let i = 0; i < 14; i++) {
+    petals.push({
+      x: origin.x + (Math.random() - 0.5) * 24,
+      y: origin.y + (Math.random() - 0.5) * 16,
+      vx: (Math.random() - 0.5) * 2.4,
+      vy: -1.2 - Math.random() * 2.2,
+      life: 1,
+      kind: Math.random() < 0.55 ? 'heart' : 'flower',
+      size: 8 + Math.random() * 8,
+      color: Math.random() < 0.5 ? '#ff4d7a' : '#ff8fb8',
+      petal: Math.random() < 0.5 ? '#ff7ab8' : '#ffd1e8',
+    });
+  }
+}
+
+function stepPetals() {
+  for (let i = petals.length - 1; i >= 0; i--) {
+    const p = petals[i];
+    p.x += p.vx;
+    p.y += p.vy;
+    p.vy += 0.035;
+    p.life -= 0.012;
+    if (p.life <= 0) petals.splice(i, 1);
+  }
 }
 
 // ── Rendering ───────────────────────────────────────────────────────────────
@@ -384,7 +446,18 @@ function draw() {
   ctx.fillStyle = `rgba(0,0,0,${P.bgAlpha})`;
   ctx.fillRect(0, 0, W, H);
 
-  if (!whip) return;
+  if (!whip) {
+    drawPetals();
+    drawBanner();
+    return;
+  }
+
+  if (mood === 'pet') {
+    drawGarland();
+    drawPetals();
+    drawBanner();
+    return;
+  }
 
   // White: thin halo on full spline, then extra thickness only over handle links.
   ctx.lineCap = 'round';
@@ -414,7 +487,7 @@ function draw() {
     }
   }
 
-  ctx.strokeStyle = '#111';
+  ctx.strokeStyle = mood === 'fast' ? '#c2410c' : '#111';
   for (let i = 0; i < whip.length - 1; i++) {
     const t = i / Math.max(1, whip.length - 2);
     const extra = i < P.handleThickSegments ? P.handleExtraWidth : 0;
@@ -425,6 +498,84 @@ function draw() {
     ctx.bezierCurveTo(cp1x, cp1y, cp2x, cp2y, x2, y2);
     ctx.stroke();
   }
+  drawBanner();
+}
+
+function drawGarland() {
+  ctx.lineCap = 'round';
+  ctx.lineJoin = 'round';
+  ctx.strokeStyle = '#3d8f4a';
+  ctx.lineWidth = 7;
+  ctx.beginPath();
+  ctx.moveTo(whip[0].x, whip[0].y);
+  for (let i = 0; i < whip.length - 1; i++) {
+    const { cp1x, cp1y, cp2x, cp2y, x2, y2 } = whipSegmentBezier(whip, i);
+    ctx.bezierCurveTo(cp1x, cp1y, cp2x, cp2y, x2, y2);
+  }
+  ctx.stroke();
+
+  for (let i = 2; i < whip.length; i += 3) {
+    const p = whip[i];
+    if (i % 2 === 0) drawHeart(p.x, p.y, 11, i % 4 === 0 ? '#ff3b6b' : '#ff7aa2');
+    else drawFlower(p.x, p.y, 9, '#ff8ec4', '#ffe27a');
+  }
+  drawFlower(whip[0].x, whip[0].y, 13, '#ffb3d4', '#ffe27a');
+}
+
+function drawHeart(x, y, s, color) {
+  ctx.save();
+  ctx.translate(x, y);
+  ctx.beginPath();
+  const k = s / 16;
+  ctx.moveTo(0, 4 * k);
+  ctx.bezierCurveTo(-2 * k, 1 * k, -9 * k, 1 * k, -9 * k, -4 * k);
+  ctx.bezierCurveTo(-9 * k, -9 * k, -3 * k, -10 * k, 0, -5.5 * k);
+  ctx.bezierCurveTo(3 * k, -10 * k, 9 * k, -9 * k, 9 * k, -4 * k);
+  ctx.bezierCurveTo(9 * k, 1 * k, 2 * k, 1 * k, 0, 4 * k);
+  ctx.fillStyle = color;
+  ctx.fill();
+  ctx.restore();
+}
+
+function drawFlower(x, y, s, petal, center) {
+  ctx.save();
+  ctx.translate(x, y);
+  for (let i = 0; i < 5; i++) {
+    const a = (i / 5) * Math.PI * 2 - Math.PI / 2;
+    ctx.beginPath();
+    ctx.ellipse(Math.cos(a) * s * 0.55, Math.sin(a) * s * 0.55, s * 0.42, s * 0.26, a, 0, Math.PI * 2);
+    ctx.fillStyle = petal;
+    ctx.fill();
+  }
+  ctx.beginPath();
+  ctx.arc(0, 0, s * 0.28, 0, Math.PI * 2);
+  ctx.fillStyle = center;
+  ctx.fill();
+  ctx.restore();
+}
+
+function drawPetals() {
+  for (const p of petals) {
+    ctx.globalAlpha = Math.max(0, p.life);
+    if (p.kind === 'heart') drawHeart(p.x, p.y, p.size, p.color);
+    else drawFlower(p.x, p.y, p.size * 0.7, p.petal, '#ffe27a');
+    ctx.globalAlpha = 1;
+  }
+}
+
+function drawBanner() {
+  if (!banner || Date.now() > bannerUntil || !whip) return;
+  ctx.save();
+  ctx.font = '700 22px -apple-system, BlinkMacSystemFont, sans-serif';
+  ctx.lineWidth = 5;
+  ctx.lineJoin = 'round';
+  ctx.strokeStyle = '#fff';
+  ctx.fillStyle = mood === 'pet' ? '#e11d48' : (mood === 'fast' ? '#c2410c' : '#111');
+  const x = whip[0].x + 22;
+  const y = whip[0].y - 26;
+  ctx.strokeText(banner, x, y);
+  ctx.fillText(banner, x, y);
+  ctx.restore();
 }
 
 // ── Main loop ───────────────────────────────────────────────────────────────
@@ -437,16 +588,31 @@ loop();
 
 // ── IPC from main process ───────────────────────────────────────────────────
 window.bridge.onSpawnWhip(() => {
-  whip = spawnWhip(mouseX || W / 2, mouseY || H / 2);
+  // Tray click sits in the menu bar; spawn mid-screen so the whip is visible.
+  const sx = (mouseX > 40 && mouseX < W - 40) ? mouseX : W * 0.55;
+  const sy = (mouseY > 48 && mouseY < H - 80) ? mouseY : H * 0.42;
+  mouseX = sx;
+  mouseY = sy;
+  whip = spawnWhip(sx, sy);
   dropping = false;
-  prevMouseX = mouseX;
-  prevMouseY = mouseY;
+  prevMouseX = sx;
+  prevMouseY = sy;
   handleAngle = P.baseTargetAngle;
   handleAngVel = 0;
+  mood = 'whip';
+  banner = 'latiga →';
+  bannerUntil = Date.now() + 2200;
 });
 
 window.bridge.onDropWhip(() => {
   if (whip && !dropping) dropping = true;
+});
+
+window.bridge.onCodexStatus((payload) => {
+  if (!payload) return;
+  if (payload.mood) mood = payload.mood;
+  banner = payload.label || '';
+  bannerUntil = Date.now() + 1600;
 });
 
 </script>
